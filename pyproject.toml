@@ -1,0 +1,15 @@
+[project]
+name = "cist-schedule-converter"
+version = "0.1.0"
+description = "Small server that converst schedule CSV from cist.nure.ua into modern ICS"
+readme = "README.md"
+requires-python = ">=3.14"
+dependencies = [
+    "fastapi[standard]>=0.141.1",
+    "httpx>=0.28.1",
+    "icalendar>=7.3.0",
+    "pydantic>=2.13.5",
+]
+
+[tool.fastapi]
+entrypoint = "app.main:app"
