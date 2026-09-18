@@ -19,6 +19,7 @@ class Direction(BaseModel):
     id: int
     short_name: str
     full_name: str
+    groups: list[Group] | None = []
     specialities: list[Speciality]
 
 class Faculty(BaseModel):
@@ -35,13 +36,22 @@ class University(BaseModel):
     @computed_field
     @property
     def groups(self) -> set[Group]:
-        return {
+        sp_grouops = {
             group
             for faculty in self.faculties
             for direction in faculty.directions
             for speciality in direction.specialities
             for group in speciality.groups
         }
+
+        groups = {
+            group
+            for faculty in self.faculties
+            for direction in faculty.directions
+            for group in direction.groups or []
+        }
+
+        return groups | sp_grouops
 
 class CistScheduleResponse(BaseModel):
     university: University
@@ -69,7 +79,7 @@ class EventDescription(BaseModel):
 
     @classmethod
     def from_query(cls, raw: str) -> Self:
-        parts = raw.split(":")
+        parts = raw.split(":", 1)
         if len(parts) != 2:
             raise ValueError(f"Invalid format '{raw}', expected 'subject:event_type'")
         return cls(subject=parts[0].strip(), event_type=parts[1].strip())
@@ -85,16 +95,21 @@ class MeetingUrl(BaseModel):
     @computed_field
     @property
     def url(self) -> str:
+        if self.url_id.startswith("http://") or self.url_id.startswith("https://"):
+            return self.url_id
+
         match self.url_type:
             case "google-meet":
                 base = "https://meet.google.com/"
+            case "zoom":
+                base = "https://nure-ua.zoom.us/j/"
             case _:
                 base = ""
         return f"{base}{self.url_id}"
 
     @classmethod
     def from_query(cls, raw: str) -> Self:
-        parts = raw.split(":")
+        parts = raw.split(":", 3)
         if len(parts) != 4:
             raise ValueError(f"Invalid format '{raw}', expected 'subject:event_type:url_type:url_id'")
         return cls(

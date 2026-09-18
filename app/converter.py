@@ -5,8 +5,13 @@ from icalendar import Calendar, Event, vDDDTypes
 
 from app.models import EventDescription, MeetingUrl
 
+def matches_filter(event: EventDescription, filter_item: EventDescription) -> bool:
+    subject_match = filter_item.subject == "*" or filter_item.subject == event.subject
+    type_match = filter_item.event_type == "*" or filter_item.event_type == event.event_type
+    return subject_match and type_match
+
 def should_exclude(event: EventDescription, exclude_list: list[EventDescription]) -> bool:
-    return any(event == item for item in exclude_list)
+    return any(matches_filter(event, item) for item in exclude_list)
 
 def convert_csv_to_ics(
     csv_content: str,
@@ -39,7 +44,8 @@ def convert_csv_to_ics(
         attachment = next(
             (
                 url for url in (attach_list or [])
-                if url.subject == event_description.subject and url.event_type == event_description.event_type
+                if (url.subject == "*" or url.subject == event_description.subject)
+                and (url.event_type == "*" or url.event_type == event_description.event_type)
             ),
             None
         )

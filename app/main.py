@@ -1,11 +1,11 @@
 from datetime import date
 from typing import Annotated
 from fastapi import FastAPI, Request, Query, Response
-from pydantic import BeforeValidator
+from fastapi.responses import FileResponse, HTMLResponse
 from starlette.middleware.base import RequestResponseEndpoint
 import httpx
 
-from .models import EventDescriptionFromQuery, Group, CistScheduleResponse, MeetingUrl, MeetingUrlFromQuery
+from .models import EventDescription, Group, CistScheduleResponse, MeetingUrl
 from .converter import convert_csv_to_ics
 
 app = FastAPI()
@@ -15,6 +15,10 @@ async def default_cache_control(request: Request, call_next: RequestResponseEndp
     response = await call_next(request)
     response.headers["Cache-Control"] = f"public, max-age={ 60*60*12 }, stale-while-revalidate=600"
     return response
+
+@app.get("/", response_class=HTMLResponse)
+async def root():
+    return FileResponse("app/index.html")
 
 @app.get("/groups")
 async def groups() -> set[Group]:
@@ -33,9 +37,12 @@ async def get_group_schedule(
     group_id: int,
     from_date: Annotated[date, Query(alias="from")],
     to_date: Annotated[date, Query(alias="to")],
-    exclude: Annotated[list[EventDescriptionFromQuery] | None, Query()] = None,
-    attach: Annotated[ list[MeetingUrlFromQuery] | None, Query() ] = None
+    exclude: Annotated[list[str] | None, Query()] = None,
+    attach: Annotated[list[str] | None, Query()] = None,
 ):
+    exclude_list = [EventDescription.from_query(e) for e in (exclude or [])]
+    attach_list = [MeetingUrl.from_query(a) for a in (attach or [])]
+
     params = {
         "ATypeDoc": "3",
         "Aid_potok": "0",
@@ -52,7 +59,7 @@ async def get_group_schedule(
         )).raise_for_status()
         content = resp.content.decode("cp1251", errors="replace")
 
-    ics_data = convert_csv_to_ics(content, group_id=group_id, exclude_list=exclude, attach_list = attach)
+    ics_data = convert_csv_to_ics(content, group_id=group_id, exclude_list=exclude_list, attach_list = attach_list)
 
     return Response(
         content=ics_data,

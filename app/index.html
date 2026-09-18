@@ -1,0 +1,179 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>CIST Schedule URL Builder</title>
+  <style>
+    body { font-family: sans-serif; max-width: 600px; margin: 20px auto; padding: 0 10px; }
+    div { margin-bottom: 15px; }
+    label { display: block; margin-bottom: 5px; }
+    input, select, textarea { width: 100%; box-sizing: border-box; }
+    .inline { display: flex; gap: 10px; }
+    .inline > * { flex: 1; }
+    ul { padding-left: 20px; }
+  </style>
+</head>
+<body>
+  <h1>CIST Schedule URL Builder</h1>
+
+  <div>
+    <label for="group-search">Group</label>
+    <input type="text" id="group-search" placeholder="Search group..." oninput="filterGroups()">
+    <select id="group-select" size="5" onchange="updateUrl()"></select>
+  </div>
+
+  <div class="inline">
+    <div id="from-date-container"></div>
+    <div id="to-date-container"></div>
+  </div>
+
+  <div>
+    <label>Exclude Events</label>
+    <div class="inline">
+      <input type="text" id="ex-subject" placeholder="Subject (or * for all)">
+      <select id="ex-type"></select>
+      <button type="button" onclick="addExclude()">Add</button>
+    </div>
+    <ul id="exclude-list"></ul>
+  </div>
+
+  <div>
+    <label>Attach Meeting URL</label>
+    <div class="inline">
+      <input type="text" id="att-subject" placeholder="Subject">
+      <select id="att-type"></select>
+    </div>
+    <div class="inline" style="margin-top: 5px;">
+      <select id="att-urltype">
+        <option value="google-meet">google-meet</option>
+        <option value="zoom">zoom</option>
+        <option value="custom">custom / full URL</option>
+      </select>
+      <input type="text" id="att-urlid" placeholder="Meeting ID or full URL">
+      <button type="button" onclick="addAttach()">Add</button>
+    </div>
+    <ul id="attach-list"></ul>
+  </div>
+
+  <div>
+    <label for="result-url">Constructed URL</label>
+    <textarea id="result-url" rows="3" readonly></textarea>
+    <div class="inline" style="margin-top: 5px;">
+      <button type="button" onclick="copyUrl()">Copy URL</button>
+    </div>
+  </div>
+
+  <script>
+    const EVENT_TYPES = ['*', 'Лк', 'Пз', 'Лаб', 'Екз', 'Залік'];
+    const $ = id => document.getElementById(id);
+    const val = id => $(id).value.trim();
+
+    let allGroups = [], excludeItems = [], attachItems = [];
+
+    function populateSelect(id, options) {
+      $(id).innerHTML = options.map(o => `<option value="${o}">${o}</option>`).join('');
+    }
+
+    function renderDateField(containerId, fieldId, labelText, defaultValue) {
+      $(containerId).innerHTML = `
+        <label for="${fieldId}">${labelText}</label>
+        <input type="date" id="${fieldId}" value="${defaultValue}" onchange="updateUrl()">
+      `;
+    }
+
+    function renderList(ulId, items, formatFn, removeFnName) {
+      $(ulId).innerHTML = items.map((item, idx) =>
+        `<li>${formatFn(item)} <button type="button" onclick="${removeFnName}(${idx})">x</button></li>`
+      ).join('');
+    }
+
+    async function loadGroups() {
+      try {
+        const resp = await fetch('/groups', { cache: 'no-cache' });
+        const groups = await resp.json();
+        allGroups = Array.from(groups).sort((a, b) => a.name.localeCompare(b.name));
+        renderGroups(allGroups);
+      } catch (err) {
+        console.error('Failed to load groups:', err);
+      }
+    }
+
+    function renderGroups(groups) {
+      populateSelect('group-select', groups.map(g => `${g.name} (ID: ${g.id})`));
+      const sel = $('group-select');
+      groups.forEach((g, idx) => { sel.options[idx].value = g.id; });
+      if (groups.length > 0) sel.selectedIndex = 0;
+      updateUrl();
+    }
+
+    function filterGroups() {
+      const q = val('group-search').toLowerCase();
+      renderGroups(allGroups.filter(g => g.name.toLowerCase().includes(q) || String(g.id).includes(q)));
+    }
+
+    function initDates() {
+      const now = new Date();
+      const year = now.getFullYear();
+      const startYear = (now.getMonth() + 1) >= 9 ? year : year - 1;
+      renderDateField('from-date-container', 'from-date', 'From', `${startYear}-09-01`);
+      renderDateField('to-date-container', 'to-date', 'To', `${startYear + 1}-07-31`);
+    }
+
+    function addExclude() {
+      const subject = val('ex-subject') || '*';
+      excludeItems.push({ subject, type: val('ex-type') });
+      $('ex-subject').value = '';
+      renderList('exclude-list', excludeItems, i => `${i.subject}:${i.type}`, 'removeExclude');
+      updateUrl();
+    }
+
+    function removeExclude(idx) {
+      excludeItems.splice(idx, 1);
+      renderList('exclude-list', excludeItems, i => `${i.subject}:${i.type}`, 'removeExclude');
+      updateUrl();
+    }
+
+    function addAttach() {
+      const subject = val('att-subject'), type = val('att-type'), urlType = val('att-urltype'), urlId = val('att-urlid');
+      if (!subject || !type || !urlType || !urlId) return;
+      attachItems.push({ subject, type, urlType, urlId });
+      $('att-subject').value = '';
+      $('att-urlid').value = '';
+      renderList('attach-list', attachItems, i => `${i.subject}:${i.type}:${i.urlType}:${i.urlId}`, 'removeAttach');
+      updateUrl();
+    }
+
+    function removeAttach(idx) {
+      attachItems.splice(idx, 1);
+      renderList('attach-list', attachItems, i => `${i.subject}:${i.type}:${i.urlType}:${i.urlId}`, 'removeAttach');
+      updateUrl();
+    }
+
+    function updateUrl() {
+      const groupId = val('group-select');
+      if (!groupId) { $('result-url').value = ''; return; }
+
+      const url = new URL(`/groups/${groupId}/schedule`, window.location.origin);
+      if (val('from-date')) url.searchParams.append('from', val('from-date'));
+      if (val('to-date')) url.searchParams.append('to', val('to-date'));
+      excludeItems.forEach(i => url.searchParams.append('exclude', `${i.subject}:${i.type}`));
+      attachItems.forEach(i => url.searchParams.append('attach', `${i.subject}:${i.type}:${i.urlType}:${i.urlId}`));
+      $('result-url').value = url.toString();
+    }
+
+    function copyUrl() {
+      const text = val('result-url');
+      if (!text) return;
+      navigator.clipboard.writeText(text);
+      alert('URL copied to clipboard!');
+    }
+
+    document.addEventListener('DOMContentLoaded', () => {
+      populateSelect('ex-type', EVENT_TYPES);
+      populateSelect('att-type', EVENT_TYPES);
+      initDates();
+      loadGroups();
+    });
+  </script>
+</body>
+</html>
