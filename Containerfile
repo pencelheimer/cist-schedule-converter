@@ -8,4 +8,4 @@ WORKDIR /app
 COPY --from=builder /app/.venv /app/.venv
 COPY app ./app
 ENV PATH="/app/.venv/bin:$PATH" PORT=8000
-CMD ["sh", "-c", "fastapi run app/main.py --host 0.0.0.0 --port $PORT"]
+CMD ["sh", "-c", "fastapi run -e app.main:app --host 0.0.0.0 --port $PORT"]
