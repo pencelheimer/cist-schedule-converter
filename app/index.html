@@ -17,9 +17,17 @@
   <h1>CIST Schedule URL Builder</h1>
 
   <div>
+    <label>Import Settings from URL</label>
+    <div class="inline">
+      <input type="text" id="import-url" placeholder="Paste generated schedule URL here...">
+      <button type="button" onclick="importFromUrl()">Load Settings</button>
+    </div>
+  </div>
+
+  <div>
     <label for="group-search">Group</label>
     <input type="text" id="group-search" placeholder="Search group..." oninput="filterGroups()">
-    <select id="group-select" size="5" onchange="updateUrl()"></select>
+    <select id="group-select" size="5" onchange="onStateChange()"></select>
   </div>
 
   <div class="inline">
@@ -60,13 +68,15 @@
     <textarea id="result-url" rows="3" readonly></textarea>
     <div class="inline" style="margin-top: 5px;">
       <button type="button" onclick="copyUrl()">Copy URL</button>
+      <button type="button" onclick="clearSavedState()">Reset All</button>
     </div>
   </div>
 
   <script>
-    const EVENT_TYPES = ['*', 'Лк', 'Пз', 'Лаб', 'Екз', 'Залік'];
+    const EVENT_TYPES = ['*', 'Лк', 'Пз', 'Лб', 'Екз', 'Залік'];
     const $ = id => document.getElementById(id);
     const val = id => $(id).value.trim();
+    const STORAGE_KEY = 'cist_builder_state';
 
     let allGroups = [], excludeItems = [], attachItems = [];
 
@@ -77,7 +87,7 @@
     function renderDateField(containerId, fieldId, labelText, defaultValue) {
       $(containerId).innerHTML = `
         <label for="${fieldId}">${labelText}</label>
-        <input type="date" id="${fieldId}" value="${defaultValue}" onchange="updateUrl()">
+        <input type="date" id="${fieldId}" value="${defaultValue}" onchange="onStateChange()">
       `;
     }
 
@@ -102,8 +112,8 @@
       populateSelect('group-select', groups.map(g => `${g.name} (ID: ${g.id})`));
       const sel = $('group-select');
       groups.forEach((g, idx) => { sel.options[idx].value = g.id; });
-      if (groups.length > 0) sel.selectedIndex = 0;
-      updateUrl();
+      restoreGroupSelection();
+      onStateChange();
     }
 
     function filterGroups() {
@@ -124,13 +134,13 @@
       excludeItems.push({ subject, type: val('ex-type') });
       $('ex-subject').value = '';
       renderList('exclude-list', excludeItems, i => `${i.subject}:${i.type}`, 'removeExclude');
-      updateUrl();
+      onStateChange();
     }
 
     function removeExclude(idx) {
       excludeItems.splice(idx, 1);
       renderList('exclude-list', excludeItems, i => `${i.subject}:${i.type}`, 'removeExclude');
-      updateUrl();
+      onStateChange();
     }
 
     function addAttach() {
@@ -140,13 +150,18 @@
       $('att-subject').value = '';
       $('att-urlid').value = '';
       renderList('attach-list', attachItems, i => `${i.subject}:${i.type}:${i.urlType}:${i.urlId}`, 'removeAttach');
-      updateUrl();
+      onStateChange();
     }
 
     function removeAttach(idx) {
       attachItems.splice(idx, 1);
       renderList('attach-list', attachItems, i => `${i.subject}:${i.type}:${i.urlType}:${i.urlId}`, 'removeAttach');
+      onStateChange();
+    }
+
+    function onStateChange() {
       updateUrl();
+      saveState();
     }
 
     function updateUrl() {
@@ -161,6 +176,114 @@
       $('result-url').value = url.toString();
     }
 
+    function saveState() {
+      const state = {
+        groupId: val('group-select'),
+        fromDate: val('from-date'),
+        toDate: val('to-date'),
+        excludeItems,
+        attachItems
+      };
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+    }
+
+    function restoreGroupSelection() {
+      const saved = localStorage.getItem(STORAGE_KEY);
+      if (!saved) return;
+      try {
+        const state = JSON.parse(saved);
+        if (state.groupId) {
+          const sel = $('group-select');
+          for (let i = 0; i < sel.options.length; i++) {
+            if (sel.options[i].value === String(state.groupId)) {
+              sel.selectedIndex = i;
+              break;
+            }
+          }
+        }
+      } catch (e) {}
+    }
+
+    function loadSavedState() {
+      const saved = localStorage.getItem(STORAGE_KEY);
+      if (!saved) return;
+      try {
+        const state = JSON.parse(saved);
+        if (state.fromDate) $('from-date').value = state.fromDate;
+        if (state.toDate) $('to-date').value = state.toDate;
+        if (Array.isArray(state.excludeItems)) {
+          excludeItems = state.excludeItems;
+          renderList('exclude-list', excludeItems, i => `${i.subject}:${i.type}`, 'removeExclude');
+        }
+        if (Array.isArray(state.attachItems)) {
+          attachItems = state.attachItems;
+          renderList('attach-list', attachItems, i => `${i.subject}:${i.type}:${i.urlType}:${i.urlId}`, 'removeAttach');
+        }
+      } catch (e) {}
+    }
+
+    function clearSavedState() {
+      localStorage.removeItem(STORAGE_KEY);
+      excludeItems = [];
+      attachItems = [];
+      renderList('exclude-list', excludeItems, i => '', 'removeExclude');
+      renderList('attach-list', attachItems, i => '', 'removeAttach');
+      initDates();
+      onStateChange();
+    }
+
+    function importFromUrl() {
+      const rawUrl = val('import-url');
+      if (!rawUrl) return;
+      try {
+        const parsed = new URL(rawUrl);
+        const match = parsed.pathname.match(/\/groups\/(\d+)\/schedule/);
+        if (match && match[1]) {
+          const groupId = match[1];
+          const sel = $('group-select');
+          for (let i = 0; i < sel.options.length; i++) {
+            if (sel.options[i].value === groupId) {
+              sel.selectedIndex = i;
+              break;
+            }
+          }
+        }
+
+        const params = parsed.searchParams;
+        if (params.get('from')) $('from-date').value = params.get('from');
+        if (params.get('to')) $('to-date').value = params.get('to');
+
+        excludeItems = [];
+        params.getAll('exclude').forEach(str => {
+          const parts = str.split(':');
+          if (parts.length === 2) {
+            excludeItems.push({ subject: parts[0], type: parts[1] });
+          }
+        });
+        renderList('exclude-list', excludeItems, i => `${i.subject}:${i.type}`, 'removeExclude');
+
+        attachItems = [];
+        params.getAll('attach').forEach(str => {
+          const parts = str.split(':');
+          if (parts.length >= 4) {
+            attachItems.push({
+              subject: parts[0],
+              type: parts[1],
+              urlType: parts[2],
+              urlId: parts.slice(3).join(':')
+            });
+          }
+        });
+        renderList('attach-list', attachItems, i => `${i.subject}:${i.type}:${i.urlType}:${i.urlId}`, 'removeAttach');
+
+        $('import-url').value = '';
+        onStateChange();
+        alert('Settings loaded from URL!');
+      } catch (err) {
+        alert('Invalid URL format!');
+      }
+    }
+
     function copyUrl() {
       const text = val('result-url');
       if (!text) return;
@@ -172,6 +295,7 @@
       populateSelect('ex-type', EVENT_TYPES);
       populateSelect('att-type', EVENT_TYPES);
       initDates();
+      loadSavedState();
       loadGroups();
     });
   </script>
