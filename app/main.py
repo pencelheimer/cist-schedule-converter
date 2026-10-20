@@ -10,6 +10,19 @@ from .converter import convert_csv_to_ics
 
 app = FastAPI()
 
+CIST_PRIMARY = "https://cist.nure.ua"
+CIST_FALLBACK = "https://cist2.nure.ua"
+
+async def cist_get(path: str, params: dict[str, str] | None = None, timeout: int = 10) -> bytes:
+    """GET from the primary CIST host, falling back to the mirror on any failure."""
+    async with httpx.AsyncClient(timeout=timeout) as client:
+        try:
+            resp = await client.get(CIST_PRIMARY + path, params=params)
+            return resp.raise_for_status().content
+        except httpx.HTTPError:
+            resp = await client.get(CIST_FALLBACK + path, params=params)
+            return resp.raise_for_status().content
+
 @app.middleware("http")
 async def default_cache_control(request: Request, call_next: RequestResponseEndpoint):
     response = await call_next(request)
@@ -22,11 +35,7 @@ async def root():
 
 @app.get("/groups")
 async def groups() -> set[Group]:
-    async with httpx.AsyncClient() as client:
-        response = (await client.get(
-            "https://cist.nure.ua/ias/app/tt/P_API_GROUP_JSON"
-        )).raise_for_status()
-        content = response.content.decode('cp1251', errors="replace")
+    content = (await cist_get("/ias/app/tt/P_API_GROUP_JSON")).decode("cp1251", errors="replace")
 
     uni = CistScheduleResponse.model_validate_json(content).university
 
@@ -52,12 +61,9 @@ async def get_group_schedule(
         "ADateEnd": to_date.strftime("%d.%m.%Y"),
     }
 
-    async with httpx.AsyncClient() as client:
-        resp = (await client.get(
-            "https://cist.nure.ua/ias/app/tt/WEB_IAS_TT_GNR_RASP.GEN_GROUP_POTOK_RASP",
-            params=params
-        )).raise_for_status()
-        content = resp.content.decode("cp1251", errors="replace")
+    content = (await cist_get(
+        "/ias/app/tt/WEB_IAS_TT_GNR_RASP.GEN_GROUP_POTOK_RASP", params
+    )).decode("cp1251", errors="replace")
 
     ics_data = convert_csv_to_ics(content, group_id=group_id, exclude_list=exclude_list, attach_list = attach_list)
 
